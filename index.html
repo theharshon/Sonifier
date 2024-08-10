@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sonifier</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #uploadForm {
+            margin-bottom: 20px;
+        }
+        #audioPlayer {
+            display: none;
+            margin-top: 20px;
+        }
+        #waveform {
+            width: 100%;
+            height: 100px;
+            background-color: #f0f0f0;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>File Sonification Web App</h1>
+    <form id="uploadForm">
+        <input type="file" id="fileInput">
+        <button type="submit">Upload and Sonify</button>
+    </form>
+    <div id="message"></div>
+    <canvas id="waveform"></canvas>
+    <audio id="audioPlayer" controls>
+        Your browser does not support the audio element.
+    </audio>
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        const fileInput = document.getElementById('fileInput');
+        const message = document.getElementById('message');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const waveformCanvas = document.getElementById('waveform');
+        const ctx = waveformCanvas.getContext('2d');
+
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = fileInput.files[0];
+            if (!file) {
+                message.textContent = 'Please select a file.';
+                return;
+            }
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                let data;
+                
+                // Handle different file types
+                if (file.type.startsWith('image/')) {
+                    // For image files, use pixel data
+                    const img = await createImageBitmap(file);
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = img.width;
+                    tempCanvas.height = img.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(img, 0, 0);
+                    const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+                    data = new Uint8Array(imageData.data);
+                } else if (file.type.startsWith('audio/')) {
+                    // For audio files, use audio samples
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    data = new Float32Array(audioBuffer.getChannelData(0));
+                } else {
+                    // For other files, use raw byte data
+                    data = new Uint8Array(arrayBuffer);
+                }
+                
+                // Sonify the data
+                const audioData = sonifyData(data);
+
+                // Create an AudioBuffer
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const audioBuffer = audioCtx.createBuffer(1, audioData.length, 44100);
+                audioBuffer.getChannelData(0).set(audioData);
+
+                // Create an AudioBufferSourceNode and play the audio
+                const source = audioCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioCtx.destination);
+                source.start();
+
+                // Update UI
+                message.textContent = `File "${file.name}" processed successfully. Playing audio...`;
+                audioPlayer.style.display = 'block';
+
+                // Draw waveform
+                drawWaveform(audioData);
+
+            } catch (error) {
+                console.error('Error:', error);
+                message.textContent = `An error occurred while processing the file: ${error.message}`;
+            }
+        });
+
+        function sonifyData(data) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const sampleRate = audioContext.sampleRate;
+            const duration = 5; // 5 seconds of audio
+            const numSamples = sampleRate * duration;
+            const audioData = new Float32Array(numSamples);
+
+            for (let i = 0; i < numSamples; i++) {
+                const t = i / sampleRate;
+                let sample = 0;
+
+                for (let j = 0; j < Math.min(data.length, 10); j++) {
+                    const value = data[Math.floor(j * data.length / 10)] / 255;
+                    const frequency = 100 + value * 1000; // Map to frequency range 100-1100 Hz
+                    sample += Math.sin(2 * Math.PI * frequency * t);
+                }
+
+                audioData[i] = sample / 10;
+            }
+
+            return audioData;
+        }
+
+        function drawWaveform(audioData) {
+            const width = waveformCanvas.width;
+            const height = waveformCanvas.height;
+            const step = Math.ceil(audioData.length / width);
+
+            ctx.clearRect(0, 0, width, height);
+            ctx.beginPath();
+            ctx.moveTo(0, height / 2);
+
+            for (let i = 0, x = 0; i < audioData.length && x < width; i += step, x++) {
+                const y = (1 - audioData[i]) * height / 2;
+                ctx.lineTo(x, y);
+            }
+
+            ctx.strokeStyle = '#007bff';
+            ctx.stroke();
+        }
+    </script>
+</body>
+</html>
